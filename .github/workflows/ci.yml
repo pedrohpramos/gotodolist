@@ -26,12 +26,12 @@ jobs:
     steps:
       # 🔒 BLINDAGEM 3: actions oficiais em major estável; terceiros pinados por SHA completo
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           # 🔒 BLINDAGEM 4: cache nativo de módulos e build cache do Go
@@ -77,7 +77,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
 
@@ -90,11 +90,11 @@ jobs:
           docker compose --env-file example.env -f docker-compose-prod.yaml config >/dev/null
 
       - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       # 🔒 BLINDAGEM 5: build sem push, com cache de camadas no GitHub Actions Cache
       - name: Build ${{ matrix.image_name }} image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: ${{ matrix.dockerfile }}
@@ -102,3 +102,73 @@ jobs:
           tags: gotodolist-${{ matrix.image_name }}:ci
           cache-from: type=gha,scope=${{ matrix.image_name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image_name }}
+
+  security-scan:
+    name: 🛡️ DevSecOps (SAST Semgrep & Container Trivy)
+    needs: [lint-and-test] # Só executa a análise de segurança se a aplicação passar nos testes funcionais
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image_name: monolito
+            dockerfile: monolito/Dockerfile
+          - image_name: api
+            dockerfile: desacoplado/backend/Dockerfile
+          - image_name: frontend
+            dockerfile: desacoplado/frontend/Dockerfile
+
+    steps:
+      - name: 📥 Checkout do Código
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      # -------------------------------------------------------------
+      # ETAPA 1: SAST - Análise Estática de Código com Semgrep
+      # (imagem oficial fixada em versão; a semgrep-action@v1 foi descontinuada)
+      # -------------------------------------------------------------
+      - name: 🔍 SAST com Semgrep (Regras OWASP Top 10)
+        if: matrix.image_name == 'monolito' # código Go é compartilhado: roda uma única vez
+        run: |
+          docker run --rm -v "${{ github.workspace }}:/src" -w /src semgrep/semgrep:1.179.0 \
+            semgrep scan \
+              --config p/owasp-top-ten \
+              --config p/security-audit \
+              --config p/golang \
+              --metrics=off \
+              --error
+
+      # -------------------------------------------------------------
+      # ETAPA 2: Build da Imagem de Teste Local (reaproveita cache gha)
+      # -------------------------------------------------------------
+      - name: 🛠️ Setup Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: 🐳 Compilar Imagem Docker Efêmera para Análise
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          load: true
+          push: false
+          tags: app-audit-${{ matrix.image_name }}:local
+          cache-from: type=gha,scope=${{ matrix.image_name }}
+
+      # -------------------------------------------------------------
+      # ETAPA 3: Scanner de Vulnerabilidades de Imagem com Trivy
+      # -------------------------------------------------------------
+      - name: 🛡️ Escanear Imagem Docker com Aqua Security Trivy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: app-audit-${{ matrix.image_name }}:local
+          format: table
+          # 🚨 QUEBRA O PIPELINE SE HOUVER VULNERABILIDADE GRAVE
+          exit-code: '1'
+          ignore-unfixed: true # Foca em falhas que já possuem patch/atualização disponível
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
