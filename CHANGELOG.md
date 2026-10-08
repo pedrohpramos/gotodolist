@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/pedrohpramos/gotodolist/compare/v1.0.0...v1.1.0) (2026-10-08)
+
+
+### Features
+
+* trigger new release ([3756781](https://github.com/pedrohpramos/gotodolist/commit/375678171ec7bab0091e408ed8bdd18ad7fb5779))
+
 ## 1.0.0 (2026-10-07)
 
 
